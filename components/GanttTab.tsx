@@ -1,151 +1,118 @@
 
 import React from 'react';
 import { OptimizationResult } from '../types';
-import { Clock, Hammer } from 'lucide-react';
+import { Clock, Hammer, Truck } from 'lucide-react';
 
 interface GanttTabProps {
   data: OptimizationResult;
 }
 
+const PUMP_COLORS: Record<string, string> = {
+  'BOMBA-1': '#3b82f6', // Azul
+  'BOMBA-2': '#f97316', // Laranja
+  'BOMBA-3': '#10b981', // Verde
+  'BOMBA-4': '#ef4444', // Vermelho
+  'BOMBA-5': '#8b5cf6', // Roxo
+  'BOMBA-6': '#ec4899', // Rosa
+};
+
 export const GanttTab: React.FC<GanttTabProps> = ({ data }) => {
-  if (data.schedule.length === 0) return <div className="p-10 text-center text-slate-500">No data available. Run simulation first.</div>;
+  if (data.schedule.length === 0) return <div className="p-10 text-center text-slate-500 font-medium">Inicie a simulação para visualizar o cronograma.</div>;
 
-  // Process data for Chart
-  const works = data.works;
-  const startTime = data.schedule.reduce((min, i) => i.startTime < min ? i.startTime : min, data.schedule[0].startTime);
-  const endTime = data.schedule.reduce((max, i) => i.endTime > max ? i.endTime : max, data.schedule[0].endTime);
+  const firstStart = Math.min(...data.schedule.map(s => s.startTime.getTime()));
+  const lastEnd = Math.max(...data.schedule.map(s => s.endTime.getTime()));
+  
+  const startTime = new Date(firstStart - 30 * 60000); // 30min margem inicial
+  const endTime = new Date(lastEnd + 60 * 60000);   // 1h margem final
+  const totalDuration = endTime.getTime() - startTime.getTime();
 
-  // Buffer times
-  const startTs = startTime.getTime() - 30 * 60000;
-  const endTs = endTime.getTime() + 60 * 60000;
-  const totalDuration = endTs - startTs;
+  const getLeft = (date: Date) => `${((date.getTime() - startTime.getTime()) / totalDuration) * 100}%`;
+  const getWidth = (start: Date, end: Date) => `${((end.getTime() - start.getTime()) / totalDuration) * 100}%`;
 
-  const getLeft = (date: Date) => {
-    return `${((date.getTime() - startTs) / totalDuration) * 100}%`;
-  };
-
-  const getWidth = (start: Date, end: Date) => {
-    return `${((end.getTime() - start.getTime()) / totalDuration) * 100}%`;
-  };
-
-  const timeMarkers: Date[] = [];
-  for (let t = startTs; t <= endTs; t += 60 * 60000) { // Every hour
-    timeMarkers.push(new Date(t));
+  const hours = [];
+  for (let t = new Date(startTime).setMinutes(0,0,0); t <= endTime.getTime(); t += 3600000) {
+    hours.push(new Date(t));
   }
 
   return (
-    <div className="h-full flex flex-col bg-slate-50 overflow-hidden">
-      <div className="p-4 bg-white border-b border-slate-200 flex justify-between items-center shadow-sm z-10">
-        <h2 className="text-lg font-bold text-slate-700 flex items-center gap-2">
+    <div className="h-full flex flex-col bg-white overflow-hidden">
+      <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white z-10">
+        <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
           <Clock className="text-blue-600" size={20} />
-          Operational Gantt Timeline
+          Gantt Operacional (Modelo Determinístico)
         </h2>
-        <div className="flex gap-4 text-sm">
-          <div className="flex items-center gap-1">
-            <span className="w-3 h-3 bg-blue-500 rounded-sm"></span>
-            <span className="text-slate-600">Active Pouring</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="w-3 h-3 bg-yellow-400 rounded-sm"></span>
-            <span className="text-slate-600">Setup/Pump</span>
-          </div>
+        <div className="flex gap-4">
+          {Object.entries(PUMP_COLORS).slice(0, data.works.length).map(([id, color]) => (
+            <div key={id} className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+              <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color }}></span>
+              {id}
+            </div>
+          ))}
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto relative p-6">
-        <div className="min-w-[1000px] relative">
-          {/* Time Header */}
-          <div className="flex border-b border-slate-300 pb-2 mb-4 sticky top-0 bg-slate-50 z-10">
-            <div className="w-48 font-semibold text-slate-500 text-sm pl-2">Work Site / Pump</div>
+      <div className="flex-1 overflow-auto p-6 bg-slate-50/30">
+        <div className="min-w-[1500px] relative">
+          {/* Header de Tempo */}
+          <div className="flex mb-8 sticky top-0 bg-transparent z-20 pb-2 border-b border-slate-200">
+            <div className="w-64 font-bold text-slate-400 text-[10px] uppercase tracking-widest pl-2">Local / Bomba</div>
             <div className="flex-1 relative h-6">
-              {timeMarkers.map((time, idx) => (
-                <div 
-                  key={idx} 
-                  className="absolute text-xs text-slate-400 transform -translate-x-1/2 flex flex-col items-center"
-                  style={{ left: getLeft(time) }}
-                >
-                  <span>{time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                  {/* Show date if it's 00:00 or the first marker */}
-                  {(idx === 0 || time.getHours() === 0) && (
-                      <span className="text-[9px] text-slate-300 font-bold">{time.toLocaleDateString([], {day: '2-digit', month: '2-digit'})}</span>
-                  )}
+              {hours.map((h, i) => (
+                <div key={i} className="absolute text-[10px] font-bold text-slate-500 transform -translate-x-1/2 flex flex-col items-center" style={{ left: getLeft(h) }}>
+                  <span>{h.getHours().toString().padStart(2, '0')}:00</span>
+                  <div className="h-2 w-px bg-slate-300 mt-1"></div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Timeline Rows */}
+          {/* Linhas das Obras */}
           <div className="space-y-6">
-            {works.map((work) => {
-              const workItems = data.schedule.filter(s => s.workId === work.id);
-              if (workItems.length === 0) return null;
+            {data.works.map((work) => {
+              const loads = data.schedule.filter(s => s.workId === work.id);
+              if (loads.length === 0) return null;
               
-              // Sort items by start time
-              workItems.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-              
-              const pumpId = workItems[0]?.pumpId || 'Unassigned';
-              const workStart = workItems[0].startTime;
-              const workEnd = workItems[workItems.length - 1].endTime;
+              const pumpId = loads[0].pumpId;
+              const color = PUMP_COLORS[pumpId] || '#94a3b8';
 
               return (
-                <div key={work.id} className="group relative">
-                  <div className="flex items-start">
-                     {/* Row Label */}
-                    <div className="w-48 pr-4 py-2">
-                      <div className="font-bold text-slate-800 text-sm">{work.name}</div>
-                      <div className="text-xs text-blue-600 font-medium flex items-center gap-1 mt-1">
-                        <Hammer size={12} /> {pumpId}
-                      </div>
-                      <div className="text-xs text-slate-400 mt-1">
-                        {workStart.toLocaleString([], {day: '2-digit', month: '2-digit', hour:'2-digit', minute:'2-digit'})}
-                      </div>
+                <div key={work.id} className="flex items-center group">
+                  <div className="w-64 pr-6">
+                    <div className="font-extrabold text-slate-800 text-sm truncate">{work.name}</div>
+                    <div className="flex items-center gap-2 mt-1">
+                       <span className="px-2 py-0.5 rounded text-[9px] font-black text-white uppercase shadow-sm" style={{ backgroundColor: color }}>
+                         {pumpId}
+                       </span>
+                       <span className="text-[10px] text-slate-500 font-bold flex items-center gap-1">
+                         <Truck size={12} className="text-slate-400" /> {work.trucksAssigned} Cams
+                       </span>
                     </div>
+                  </div>
 
-                    {/* Timeline Bar Container */}
-                    <div className="flex-1 relative h-16 bg-slate-100 rounded-lg border border-slate-200">
-                      
-                      {/* Grid Lines */}
-                      {timeMarkers.map((time, idx) => (
-                        <div 
-                          key={idx} 
-                          className="absolute h-full border-r border-slate-200 border-dashed top-0"
-                          style={{ left: getLeft(time) }}
-                        />
-                      ))}
+                  <div className="flex-1 relative h-10 bg-white/50 rounded-lg border border-slate-200 shadow-sm overflow-hidden group-hover:border-slate-300 transition-all">
+                    {/* Linhas de Grade */}
+                    {hours.map((h, i) => (
+                      <div key={i} className="absolute h-full w-px bg-slate-100 top-0" style={{ left: getLeft(h) }} />
+                    ))}
 
-                      {/* Main Work Span Background (Optional, light highlight) */}
-                      <div 
-                        className="absolute h-full bg-blue-50/50 border-l border-r border-blue-100 top-0"
-                        style={{ 
-                          left: getLeft(workStart), 
-                          width: getWidth(workStart, workEnd) 
+                    {/* Blocos Fragmentados de Carga */}
+                    {loads.map((load, idx) => (
+                      <div
+                        key={idx}
+                        className="absolute h-6 top-2 rounded shadow-sm flex items-center justify-center cursor-help transition-transform hover:scale-y-125 z-10"
+                        style={{
+                          left: getLeft(load.startTime),
+                          width: getWidth(load.startTime, load.endTime),
+                          backgroundColor: color,
+                          borderLeft: '1px solid rgba(255,255,255,0.3)'
                         }}
-                      />
-
-                      {/* Individual Loads */}
-                      {workItems.map((item, idx) => (
-                        <div
-                          key={idx}
-                          className="absolute h-10 top-3 rounded shadow-sm bg-blue-500 hover:bg-blue-600 border border-blue-700 transition-all cursor-pointer flex items-center justify-center group/item z-10"
-                          style={{
-                            left: getLeft(item.startTime),
-                            width: getWidth(item.startTime, item.endTime)
-                          }}
-                        >
-                          <span className="text-[10px] font-bold text-white truncate px-1">
-                            {item.truckId}
-                          </span>
-                          
-                          {/* Tooltip */}
-                          <div className="absolute bottom-full mb-2 hidden group-hover/item:block bg-slate-800 text-white text-xs p-2 rounded shadow-lg whitespace-nowrap z-20">
-                             <div><strong>Load #{item.loadNumber}</strong></div>
-                             <div>Truck: {item.truckId}</div>
-                             <div>Start: {item.startTime.toLocaleString([], {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}</div>
-                             <div>End: {item.endTime.toLocaleString([], {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                        title={`${load.truckId} | Carga #${load.loadNumber}\nInício: ${load.startTime.toLocaleTimeString()}\nTérmino: ${load.endTime.toLocaleTimeString()}`}
+                      >
+                        <span className="text-[7px] font-black text-white px-0.5 truncate">
+                          {load.truckId.split('-').pop()}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               );

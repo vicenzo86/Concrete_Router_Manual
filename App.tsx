@@ -7,11 +7,12 @@ import { MapTab } from './components/MapTab';
 import { LoginScreen } from './components/LoginScreen';
 import { SimulationParams, OptimizationResult } from './types';
 import { generateMockData } from './utils/mockSimulation';
-import { LayoutDashboard, Clock, Map as MapIcon } from 'lucide-react';
+import { LayoutDashboard, Clock, Map as MapIcon, Truck } from 'lucide-react';
 import { supabase } from './supabase';
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'gantt' | 'bi' | 'map'>('gantt');
   const [isRunning, setIsRunning] = useState(false);
   
@@ -41,9 +42,19 @@ const App: React.FC = () => {
 
   // Check Supabase session on mount
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setIsAuthenticated(!!session);
-    });
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        setIsAuthenticated(!!session);
+      } catch (error) {
+        console.error("Auth check failed:", error);
+      } finally {
+        // Pequeno delay para suavizar a transição do Splash
+        setTimeout(() => setIsInitialLoading(false), 800);
+      }
+    };
+
+    checkSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setIsAuthenticated(!!session);
@@ -70,12 +81,29 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    setIsAuthenticated(false);
     setResults({ 
       schedule: [], 
       works: [], 
       summary: { totalTrips: 0, completionTime: '', efficiency: 0 } 
     });
   };
+
+  // Splash Screen de Carregamento
+  if (isInitialLoading) {
+    return (
+      <div className="min-h-screen w-full bg-[#0f172a] flex flex-col items-center justify-center p-4">
+        <div className="relative">
+          <div className="w-24 h-24 bg-amber-500 rounded-2xl flex items-center justify-center shadow-2xl shadow-amber-500/20 animate-pulse">
+            <Truck size={48} className="text-slate-900" />
+          </div>
+          <div className="absolute -inset-4 border-2 border-amber-500/20 rounded-3xl animate-ping opacity-20"></div>
+        </div>
+        <h2 className="text-white font-bold text-xl mt-8 tracking-wider">Concrete Router</h2>
+        <p className="text-slate-500 text-xs uppercase tracking-[0.3em] mt-2 animate-pulse">Verificando Credenciais</p>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;

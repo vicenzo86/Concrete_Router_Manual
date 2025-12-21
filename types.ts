@@ -1,5 +1,4 @@
 
-
 export interface WorkSite {
   id: string;
   name: string;
@@ -14,6 +13,8 @@ export interface WorkSite {
 export interface UploadedWork {
   loads: number;
   address: string;
+  lat?: number;
+  lng?: number;
 }
 
 export interface WorkConstraint {
@@ -65,7 +66,6 @@ export interface OptimizationResult {
   };
 }
 
-// Added HistoryItem interface to fix the error: Module '"../types"' has no exported member 'HistoryItem'
 export interface HistoryItem {
   id: string;
   timestamp: number;

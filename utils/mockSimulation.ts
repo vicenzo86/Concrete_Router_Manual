@@ -1,306 +1,214 @@
 
-import { OptimizationResult, ScheduleItem, SimulationParams, WorkSite } from '../types';
+import { OptimizationResult, ScheduleItem, SimulationParams, WorkSite, WorkConstraint } from '../types';
 
-// ==========================================
-// HELPERS & CONFIG
-// ==========================================
+/**
+ * Utilitários de data e tempo
+ */
+const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + Math.round(minutes) * 60000);
 
-const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60000);
-
-const getMinutesFromMidnight = (timeStr: string) => {
-    const [h, m] = timeStr.split(':').map(Number);
-    return h * 60 + m;
+const parseTimeToMinutes = (timeStr: string, baseStartTime: string): number => {
+  const [h, m] = timeStr.split(':').map(Number);
+  const [bh, bm] = baseStartTime.split(':').map(Number);
+  return (h * 60 + m) - (bh * 60 + bm);
 };
 
-function getDistanceFromLatLonInKm(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371; 
+/**
+ * Cálculo de distância real via Haversine
+ */
+function getDistanceFromLatLonInKm(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a =
+  const dLon = (lng2 - lng1) * (Math.PI / 180);
+  const a = 
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2); 
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
   return R * c;
 }
 
-function getSimulatedTravelTime(from: { lat: number, lng: number }, to: { lat: number, lng: number }) {
+function getTravelTime(from: { lat: number, lng: number }, to: { lat: number, lng: number }) {
   const dist = getDistanceFromLatLonInKm(from.lat, from.lng, to.lat, to.lng);
-  return 10 + (dist * 2.0); 
+  return 15 + (dist * 2.5); // 15 min fixo + 2.5 min/km
 }
-
-async function getGeocodeFromHere(address: string, apiKey: string): Promise<{lat: number, lng: number} | null> {
-    if (!apiKey || !address) return null;
-    try {
-        const url = `https://geocode.search.hereapi.com/v1/geocode?q=${encodeURIComponent(address)}&apiKey=${apiKey}`;
-        const response = await fetch(url);
-        if (!response.ok) return null;
-        const data = await response.json();
-        if (data.items && data.items.length > 0) {
-            const pos = data.items[0].position;
-            return { lat: pos.lat, lng: pos.lng };
-        }
-    } catch (e) { console.warn(`Geocoding failed for ${address}`, e); }
-    return null;
-}
-
-const REALISTIC_POINTS = [
-    { lat: -26.8826, lng: -48.6658 }, { lat: -26.8900, lng: -48.6800 },
-    { lat: -26.8700, lng: -48.6550 }, { lat: -26.9100, lng: -48.6900 },
-    { lat: -26.9050, lng: -48.6700 }, { lat: -26.8950, lng: -48.7000 },
-    { lat: -26.8600, lng: -48.6500 }, { lat: -26.9200, lng: -48.6800 },
-    { lat: -26.8850, lng: -48.6600 }, { lat: -26.9000, lng: -48.6650 },
-];
-
-function getFallbackCoords(index: number) {
-  const base = REALISTIC_POINTS[index % REALISTIC_POINTS.length];
-  const jitterLat = (Math.random() - 0.5) * 0.002;
-  const jitterLng = (Math.random() - 0.5) * 0.002;
-  return { lat: base.lat + jitterLat, lng: base.lng + jitterLng };
-}
-
-// ==========================================
-// MAIN LOGIC
-// ==========================================
 
 export const generateMockData = async (params: SimulationParams): Promise<OptimizationResult> => {
-  let branchCoords = { lat: -26.8955, lng: -48.6757 };
-  const manualLat = parseFloat(params.branchLat);
-  const manualLng = parseFloat(params.branchLng);
-  if (!isNaN(manualLat) && !isNaN(manualLng)) {
-      branchCoords = { lat: manualLat, lng: manualLng };
-  } else if (params.apiKey && params.branchAddress && params.branchAddress.length > 5) {
-      const found = await getGeocodeFromHere(params.branchAddress, params.apiKey);
-      if (found) branchCoords = found;
-  }
+  const branchCoords = { 
+    lat: params.branchLat ? parseFloat(params.branchLat) : -26.8955, 
+    lng: params.branchLng ? parseFloat(params.branchLng) : -48.6757 
+  };
 
-  let rawWorks: WorkSite[] = [];
-  if (params.uploadedData && params.uploadedData.length > 0) {
-    rawWorks = await Promise.all(params.uploadedData.map(async (item, i) => {
-      let coords = null;
-      if (params.apiKey && item.address.length > 5 && !item.address.toLowerCase().includes("exemplo")) {
-          let searchAddr = item.address;
-          if (!searchAddr.toLowerCase().includes("navegantes") && !searchAddr.toLowerCase().includes("sc")) {
-              searchAddr += ", Navegantes, SC, Brasil";
-          }
-          coords = await getGeocodeFromHere(searchAddr, params.apiKey);
-      }
-      if (!coords) coords = getFallbackCoords(i);
-      return {
-        id: `W-${i + 1}`,
-        name: `Obra ${i + 1}`,
-        address: item.address,
-        // DYNAMIC VOLUME: loads * truckCapacity
-        volume: item.loads * params.truckCapacity,
-        loads: item.loads > 0 ? item.loads : 1,
-        lat: coords.lat,
-        lng: coords.lng,
-        trucksAssigned: 0 
-      };
-    }));
-  } else {
-    const count = params.mode === 'simulator' ? 5 : 15;
-    rawWorks = Array.from({ length: count }).map((_, i) => {
-      const coords = getFallbackCoords(i);
-      const loads = Math.floor(Math.random() * 8) + 3;
-      return {
-        id: `W-${i + 1}`,
-        name: `Obra Exemplo ${i + 1}`,
-        address: `Navegantes, SC`,
-        loads: loads,
-        // DYNAMIC VOLUME: loads * truckCapacity
-        volume: loads * params.truckCapacity,
-        lat: coords.lat,
-        lng: coords.lng,
-        trucksAssigned: 0 
-      };
-    });
-  }
+  // 1. Preparação
+  let works = (params.uploadedData || []).map((item, i) => {
+    const lat = item.lat || (-26.89 + (Math.random() * 0.08 - 0.04));
+    const lng = item.lng || (-48.67 + (Math.random() * 0.08 - 0.04));
+    const ida = getTravelTime(branchCoords, { lat, lng });
+    const tempoUnit = params.loadTime + (2 * ida) + params.unloadTime;
+    
+    return {
+      index: i,
+      id: `W-${i + 1}`,
+      name: item.address,
+      address: item.address,
+      volume: item.loads * params.truckCapacity,
+      loads: item.loads,
+      cargasRestantes: item.loads,
+      lat,
+      lng,
+      trucksAssigned: 0,
+      tempoUnitEst: tempoUnit,
+      tempoTotalEst: tempoUnit * item.loads,
+      pumpId: null as string | null,
+      finished: false,
+      manualConstraint: params.manualConstraints.find(c => c.workIndex === i)
+    };
+  });
 
-  if (params.mode === 'simulator') {
-      return runSimulator(rawWorks, branchCoords, params);
-  } else {
-      return runOptimizer(rawWorks, branchCoords, params);
-  }
-};
+  if (works.length === 0) return { schedule: [], works: [], summary: { totalTrips: 0, completionTime: '00:00', efficiency: 0 } };
 
-function runOptimizer(works: WorkSite[], branchCoords: {lat: number, lng: number}, params: SimulationParams): OptimizationResult {
-  let pendingWorks = works.map(w => {
-    const travelTime = getSimulatedTravelTime(branchCoords, w);
-    const unitTime = params.loadTime + (2 * travelTime) + params.unloadTime;
-    return { ...w, unitTimeEst: unitTime, totalTimeEst: unitTime * w.loads };
-  }).sort((a, b) => b.totalTimeEst - a.totalTimeEst);
+  // PRIORIZAÇÃO CRÍTICA: 
+  // 1º Obras Travadas (Sorted por horário de início)
+  // 2º Obras Livres (Sorted por tempo de ciclo total descendente)
+  works.sort((a, b) => {
+    const aLocked = a.manualConstraint?.locked;
+    const bLocked = b.manualConstraint?.locked;
 
-  const numPumps = params.totalPumps;
-  const totalTrucks = params.totalTrucks;
-  
-  const totalEstimatedTime = pendingWorks.reduce((acc, w) => acc + w.totalTimeEst, 0);
-  const trucksPerPump: number[] = new Array(numPumps).fill(0);
-  let remainingTrucks = totalTrucks;
+    if (aLocked && !bLocked) return -1;
+    if (!aLocked && bLocked) return 1;
 
-  for (let i = 0; i < numPumps; i++) {
-    const workloadShare = (pendingWorks[i]?.totalTimeEst || 0) / (totalEstimatedTime || 1);
-    let assigned = Math.max(1, Math.floor(workloadShare * totalTrucks));
-    trucksPerPump[i] = assigned;
-    remainingTrucks -= assigned;
-  }
+    if (aLocked && bLocked) {
+      const aTime = parseTimeToMinutes(a.manualConstraint!.forcedStartTime, params.startTime);
+      const bTime = parseTimeToMinutes(b.manualConstraint!.forcedStartTime, params.startTime);
+      return aTime - bTime;
+    }
 
-  let pIdx = 0;
-  while (remainingTrucks > 0) { trucksPerPump[pIdx % numPumps]++; remainingTrucks--; pIdx++; }
-  while (remainingTrucks < 0) { if (trucksPerPump[pIdx % numPumps] > 1) { trucksPerPump[pIdx % numPumps]--; remainingTrucks++; } pIdx++; }
+    return b.tempoTotalEst - a.tempoTotalEst;
+  });
 
-  const pumps = trucksPerPump.map((count, i) => ({
-    id: `Bomba ${i + 1}`,
-    trucks: count,
-    coords: { ...branchCoords },
-    availableTime: 0, 
-  }));
-
-  const schedule: ScheduleItem[] = [];
   const [year, month, day] = params.startDate.split('-').map(Number);
   const [sh, sm] = params.startTime.split(':').map(Number);
   const startDateTime = new Date(year, month - 1, day, sh, sm, 0, 0);
 
-  const workMap = new Map(works.map(w => [w.id, w]));
+  // 2. Distribuição da Frota
+  const totalTrucks = params.totalTrucks;
+  const numBombas = params.totalPumps;
+  
+  const bombas = Array.from({ length: numBombas }).map((_, i) => ({
+    id: i + 1,
+    availableMinutes: 0,
+    caminhoes: 0,
+    coords: branchCoords
+  }));
 
-  while (pendingWorks.length > 0) {
-      pumps.sort((a, b) => a.availableTime - b.availableTime);
-      const pump = pumps[0];
-      const nextWorkData = pendingWorks.shift();
-      if (!nextWorkData) break;
-      
-      const realWork = workMap.get(nextWorkData.id);
-      if (!realWork) continue;
+  const lockedWorks = works.filter(o => o.manualConstraint?.locked);
+  const totalForcedTrucks = lockedWorks.reduce((acc, o) => acc + (o.manualConstraint?.forcedTrucks || 0), 0);
+  const availableFleetForVariable = Math.max(0, totalTrucks - totalForcedTrucks);
 
-      const travelTime = getSimulatedTravelTime(pump.coords, realWork);
-      const cycleTime = params.loadTime + (2 * travelTime) + params.unloadTime;
-      const durationMin = (cycleTime * realWork.loads) / pump.trucks;
-      
-      const departTime = pump.availableTime;
-      const arrivalAtSite = departTime + travelTime;
-      const interval = durationMin / realWork.loads;
+  const variableWorks = works.filter(o => !o.manualConstraint?.locked).slice(0, Math.max(0, numBombas - lockedWorks.length));
+  const totalWeightVariable = variableWorks.reduce((acc, o) => acc + o.tempoTotalEst, 0);
 
-      realWork.trucksAssigned = pump.trucks;
-
-      for (let l = 0; l < realWork.loads; l++) {
-          const loadStart = arrivalAtSite + (l * interval);
-          schedule.push({
-              id: `${realWork.id}-L${l+1}`,
-              workId: realWork.id,
-              truckId: `T${(l % pump.trucks) + 1}`,
-              pumpId: pump.id,
-              loadNumber: l + 1,
-              startTime: addMinutes(startDateTime, loadStart),
-              endTime: addMinutes(startDateTime, loadStart + params.unloadTime),
-              status: 'unloading'
-          });
+  let allocatedVariable = 0;
+  
+  works.forEach(obra => {
+      if (obra.manualConstraint?.locked) {
+          obra.trucksAssigned = obra.manualConstraint.forcedTrucks;
+      } else {
+          const isAmongInitial = variableWorks.some(vw => vw.id === obra.id);
+          if (isAmongInitial && totalWeightVariable > 0) {
+              const share = Math.floor(availableFleetForVariable * (obra.tempoTotalEst / totalWeightVariable));
+              obra.trucksAssigned = Math.max(1, share);
+              allocatedVariable += obra.trucksAssigned;
+          } else {
+              obra.trucksAssigned = 0; 
+          }
       }
-      pump.availableTime = arrivalAtSite + durationMin;
-      pump.coords = { lat: realWork.lat, lng: realWork.lng };
+  });
+
+  if (allocatedVariable !== availableFleetForVariable && variableWorks.length > 0) {
+      const diff = availableFleetForVariable - allocatedVariable;
+      const firstVar = works.find(o => o.id === variableWorks[0].id);
+      if (firstVar) firstVar.trucksAssigned = Math.max(1, (firstVar.trucksAssigned || 0) + diff);
   }
-  return buildResult(works, branchCoords, schedule);
-}
 
-function runSimulator(works: WorkSite[], branchCoords: {lat: number, lng: number}, params: SimulationParams): OptimizationResult {
-    const schedule: ScheduleItem[] = [];
-    const [year, month, day] = params.startDate.split('-').map(Number);
-    const baseDate = new Date(year, month - 1, day, 0, 0, 0, 0);
-    const globalStartTimeMin = getMinutesFromMidnight(params.startTime);
+  // 3. Simulação
+  const schedule: ScheduleItem[] = [];
+  const worksQueue = [...works];
 
-    let manualTrucksTotal = 0;
-    const manualIndices: number[] = [];
-    const autoIndices: number[] = [];
-    
-    works.forEach((_, idx) => {
-        const constraint = params.manualConstraints[idx];
-        if (constraint && constraint.locked) { 
-            manualIndices.push(idx); 
-            manualTrucksTotal += constraint.forcedTrucks;
-        } else { autoIndices.push(idx); }
+  while (worksQueue.some(o => !o.finished)) {
+    bombas.sort((a, b) => a.availableMinutes - b.availableMinutes);
+    const b = bombas[0];
+    const now = b.availableMinutes;
+
+    const workIdx = worksQueue.findIndex(o => {
+      if (o.finished) return false;
+      if (o.manualConstraint?.locked) {
+        if (o.manualConstraint.forcedPumpId !== b.id) return false;
+        const startMin = parseTimeToMinutes(o.manualConstraint.forcedStartTime, params.startTime);
+        return now >= startMin;
+      }
+      return true;
     });
 
-    const remainingTrucks = Math.max(0, params.totalTrucks - manualTrucksTotal);
-    const autoPumpCount = Math.max(1, params.totalPumps); 
-    const trucksPerAutoPump = Math.max(1, Math.floor(remainingTrucks / autoPumpCount));
-
-    const pumpsState = Array.from({ length: params.totalPumps }).map((_, i) => ({
-        id: i + 1,
-        availableTime: globalStartTimeMin,
-        coords: { ...branchCoords },
-        trucks: trucksPerAutoPump 
-    }));
-
-    for (const workIdx of manualIndices) {
-        const work = works[workIdx];
-        const constraint = params.manualConstraints[workIdx];
-        const pumpId = constraint.forcedPumpId; 
-        const trucks = Math.max(1, constraint.forcedTrucks);
-        const desiredStart = getMinutesFromMidnight(constraint.forcedStartTime);
-        const pumpState = pumpsState[pumpId - 1] || pumpsState[0];
-        
-        const travelTime = getSimulatedTravelTime(pumpState.coords, work);
-        let arrivalTime = Math.max(pumpState.availableTime + travelTime, desiredStart);
-        
-        const cycleTime = params.loadTime + (2 * travelTime) + params.unloadTime;
-        const durationMin = (cycleTime * work.loads) / trucks;
-        const interval = durationMin / work.loads;
-
-        work.trucksAssigned = trucks;
-
-        for (let l = 0; l < work.loads; l++) {
-            const loadStart = arrivalTime + (l * interval);
-            schedule.push({
-                id: `${work.id}-L${l+1}`, workId: work.id, truckId: `T${(l % trucks) + 1}`,
-                pumpId: `Bomba ${pumpId}`, loadNumber: l + 1,
-                startTime: addMinutes(baseDate, loadStart),
-                endTime: addMinutes(baseDate, loadStart + params.unloadTime),
-                status: 'unloading'
-            });
-        }
-        pumpState.availableTime = arrivalTime + durationMin;
-        pumpState.coords = { lat: work.lat, lng: work.lng };
+    if (workIdx === -1) {
+      b.availableMinutes += 5;
+      if (b.availableMinutes > 1440) break; 
+      continue;
     }
 
-    const autoWorks = autoIndices.map(i => works[i]);
-    for (const work of autoWorks) {
-        pumpsState.sort((a, b) => a.availableTime - b.availableTime);
-        const bestPump = pumpsState[0];
-        const travelTime = getSimulatedTravelTime(bestPump.coords, work);
-        const arrivalTime = bestPump.availableTime + travelTime;
-        const trucks = bestPump.trucks; 
-        const cycleTime = params.loadTime + (2 * travelTime) + params.unloadTime;
-        const durationMin = (cycleTime * work.loads) / trucks;
-        const interval = durationMin / work.loads;
-
-        work.trucksAssigned = trucks;
-
-        for (let l = 0; l < work.loads; l++) {
-            const loadStart = arrivalTime + (l * interval);
-            schedule.push({
-                id: `${work.id}-L${l+1}`, workId: work.id, truckId: `T${(l % trucks) + 1}`,
-                pumpId: `Bomba ${bestPump.id}`, loadNumber: l + 1,
-                startTime: addMinutes(baseDate, loadStart),
-                endTime: addMinutes(baseDate, loadStart + params.unloadTime),
-                status: 'unloading'
-            });
-        }
-        bestPump.availableTime = arrivalTime + durationMin;
-        bestPump.coords = { lat: work.lat, lng: work.lng };
+    const obra = worksQueue[workIdx];
+    
+    if (!obra.trucksAssigned || obra.trucksAssigned === 0) {
+        obra.trucksAssigned = Math.max(1, Math.floor(totalTrucks / numBombas));
     }
-    return buildResult(works, branchCoords, schedule);
-}
 
-function buildResult(works: WorkSite[], branchCoords: {lat: number, lng: number}, schedule: ScheduleItem[]): OptimizationResult {
-    const allEndTimes = schedule.map(s => s.endTime.getTime());
-    const maxTime = allEndTimes.length > 0 ? new Date(Math.max(...allEndTimes)) : new Date();
-    return {
-      works: [...works], 
-      branchLocation: branchCoords,
-      schedule: schedule.sort((a,b) => a.startTime.getTime() - b.startTime.getTime()),
-      summary: {
-        totalTrips: schedule.length,
-        completionTime: maxTime.toLocaleString([], { day:'2-digit', month:'2-digit', hour: '2-digit', minute: '2-digit' }),
-        efficiency: 95
-      }
-    };
-}
+    const ida = getTravelTime(branchCoords, { lat: obra.lat, lng: obra.lng });
+    const cycleTime = obra.tempoUnitEst;
+    const interval = cycleTime / Math.max(1, obra.trucksAssigned);
+    
+    // Respeito ao horário de início forçado se for a primeira carga na bomba para esta obra
+    let operationalStart = now;
+    if (obra.manualConstraint?.locked) {
+        const forcedStartMin = parseTimeToMinutes(obra.manualConstraint.forcedStartTime, params.startTime);
+        operationalStart = Math.max(now, forcedStartMin);
+    }
+
+    let lastUnloadFinish = operationalStart + ida;
+
+    for (let c = 0; c < obra.loads; c++) {
+      const arriveTime = operationalStart + ida + (c * interval);
+      const startUnload = Math.max(arriveTime, lastUnloadFinish);
+      const endUnload = startUnload + params.unloadTime;
+
+      schedule.push({
+        id: `${obra.id}-L${c + 1}`,
+        workId: obra.id,
+        truckId: `C${100 + Math.floor(Math.random() * 899)}`,
+        pumpId: `BOMBA-${b.id}`,
+        loadNumber: c + 1,
+        startTime: addMinutes(startDateTime, startUnload),
+        endTime: addMinutes(startDateTime, endUnload),
+        status: 'unloading'
+      });
+
+      lastUnloadFinish = endUnload;
+    }
+
+    obra.finished = true;
+    obra.pumpId = `BOMBA-${b.id}`;
+    b.availableMinutes = lastUnloadFinish;
+    b.coords = { lat: obra.lat, lng: obra.lng };
+  }
+
+  const finalEnd = schedule.length > 0 ? Math.max(...schedule.map(s => s.endTime.getTime())) : startDateTime.getTime();
+
+  return {
+    schedule: schedule.sort((a, b) => a.startTime.getTime() - b.startTime.getTime()),
+    works: works as any[],
+    branchLocation: branchCoords,
+    summary: {
+      totalTrips: schedule.length,
+      completionTime: new Date(finalEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      efficiency: 0.92
+    }
+  };
+};
