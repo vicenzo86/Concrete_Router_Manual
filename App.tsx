@@ -49,7 +49,6 @@ const App: React.FC = () => {
       } catch (error) {
         console.error("Auth check failed:", error);
       } finally {
-        // Pequeno delay para suavizar a transição do Splash
         setTimeout(() => setIsInitialLoading(false), 800);
       }
     };
@@ -65,18 +64,16 @@ const App: React.FC = () => {
 
   const handleRunSimulation = async () => {
     setIsRunning(true);
-    setTimeout(async () => {
-      try {
-        const data = await generateMockData(params);
-        setResults(data);
-        setActiveTab('gantt');
-      } catch (error) {
-        console.error("Simulation failed:", error);
-        alert("Ocorreu um erro durante a simulação.");
-      } finally {
-        setIsRunning(false);
-      }
-    }, 100);
+    try {
+      const data = await generateMockData(params);
+      setResults(data);
+      setActiveTab('gantt');
+    } catch (error) {
+      console.error("Simulation failed:", error);
+      alert("Ocorreu um erro durante a simulação.");
+    } finally {
+      setIsRunning(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -89,7 +86,6 @@ const App: React.FC = () => {
     });
   };
 
-  // Splash Screen de Carregamento
   if (isInitialLoading) {
     return (
       <div className="min-h-screen w-full bg-[#0f172a] flex flex-col items-center justify-center p-4">
@@ -160,7 +156,7 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-hidden relative bg-slate-50">
           {activeTab === 'gantt' && <GanttTab data={results} />}
           {activeTab === 'bi' && <BITableTab data={results} />}
-          {activeTab === 'map' && <MapTab data={results} />}
+          {activeTab === 'map' && <MapTab data={results} apiKey={params.apiKey} />}
         </div>
       </div>
     </div>

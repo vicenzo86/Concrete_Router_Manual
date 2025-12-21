@@ -13,23 +13,57 @@ const parseTimeToMinutes = (timeStr: string, baseStartTime: string): number => {
 };
 
 /**
- * Cálculo de distância real via Haversine
+ * Geocodificação via HERE Search API v7
+ * Refinado para garantir que endereços parciais encontrem a região correta.
  */
-function getDistanceFromLatLonInKm(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lng2 - lng1) * (Math.PI / 180);
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
-    Math.sin(dLon / 2) * Math.sin(dLon / 2); 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); 
-  return R * c;
+async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: number, lng: number } | null> {
+  if (!apiKey || !address || address.length < 3) return null;
+  try {
+    // Adiciona contexto regional se o endereço for muito curto ou não especificar cidade/estado
+    const query = address.toLowerCase().includes('sc') || address.toLowerCase().includes('santa catarina') 
+      ? address 
+      : `${address}, Navegantes, SC, Brasil`;
+
+    const encodedAddr = encodeURIComponent(query);
+    const url = `https://geocode.search.hereapi.com/v1/geocode?q=${encodedAddr}&apiKey=${apiKey}&limit=1`;
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    if (data.items && data.items.length > 0) {
+      return data.items[0].position;
+    }
+  } catch (e) {
+    console.error("Erro na geocodificação HERE:", e);
+  }
+  return null;
 }
 
-function getTravelTime(from: { lat: number, lng: number }, to: { lat: number, lng: number }) {
-  const dist = getDistanceFromLatLonInKm(from.lat, from.lng, to.lat, to.lng);
-  return 15 + (dist * 2.5); // 15 min fixo + 2.5 min/km
+/**
+ * Cálculo de tempo de viagem usando HERE Routing API v8
+ */
+async function getTravelTimeReal(from: { lat: number, lng: number }, to: { lat: number, lng: number }, apiKey: string): Promise<number> {
+  if (!apiKey || apiKey.length < 10) {
+    // Fallback: Haversine
+    const R = 6371;
+    const dLat = (to.lat - from.lat) * (Math.PI / 180);
+    const dLon = (to.lng - from.lng) * (Math.PI / 180);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(from.lat * (Math.PI / 180)) * Math.cos(to.lat * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return 15 + (R * c * 3.0); // 15 min base + 3 min/km
+  }
+
+  try {
+    const url = `https://router.hereapi.com/v8/routes?transportMode=car&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&return=summary&apiKey=${apiKey}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    if (data.routes && data.routes.length > 0) {
+      const seconds = data.routes[0].sections[0].summary.duration;
+      return (seconds / 60) + 10; // +10 min manobra
+    }
+  } catch (e) {
+    console.error("Erro na consulta de rotas HERE:", e);
+  }
+  return 35; 
 }
 
 export const generateMockData = async (params: SimulationParams): Promise<OptimizationResult> => {
@@ -38,11 +72,18 @@ export const generateMockData = async (params: SimulationParams): Promise<Optimi
     lng: params.branchLng ? parseFloat(params.branchLng) : -48.6757 
   };
 
-  // 1. Preparação
-  let works = (params.uploadedData || []).map((item, i) => {
-    const lat = item.lat || (-26.89 + (Math.random() * 0.08 - 0.04));
-    const lng = item.lng || (-48.67 + (Math.random() * 0.08 - 0.04));
-    const ida = getTravelTime(branchCoords, { lat, lng });
+  // 1. Processamento das Obras (Geocodificação + Cálculo de Tempo)
+  const worksPromises = (params.uploadedData || []).map(async (item, i) => {
+    let coords = item.lat && item.lng ? { lat: item.lat, lng: item.lng } : null;
+    if (!coords) {
+      coords = await geocodeAddress(item.address, params.apiKey);
+    }
+    
+    // Se a geocodificação falhar, usamos um spread um pouco maior para não clusterizar tudo no mesmo ponto
+    const lat = coords?.lat || (branchCoords.lat + (Math.sin(i) * 0.04));
+    const lng = coords?.lng || (branchCoords.lng + (Math.cos(i) * 0.04));
+    
+    const ida = await getTravelTimeReal(branchCoords, { lat, lng }, params.apiKey);
     const tempoUnit = params.loadTime + (2 * ida) + params.unloadTime;
     
     return {
@@ -64,24 +105,20 @@ export const generateMockData = async (params: SimulationParams): Promise<Optimi
     };
   });
 
+  let works = await Promise.all(worksPromises);
   if (works.length === 0) return { schedule: [], works: [], summary: { totalTrips: 0, completionTime: '00:00', efficiency: 0 } };
 
-  // PRIORIZAÇÃO CRÍTICA: 
-  // 1º Obras Travadas (Sorted por horário de início)
-  // 2º Obras Livres (Sorted por tempo de ciclo total descendente)
+  // Priorização
   works.sort((a, b) => {
     const aLocked = a.manualConstraint?.locked;
     const bLocked = b.manualConstraint?.locked;
-
     if (aLocked && !bLocked) return -1;
     if (!aLocked && bLocked) return 1;
-
     if (aLocked && bLocked) {
       const aTime = parseTimeToMinutes(a.manualConstraint!.forcedStartTime, params.startTime);
       const bTime = parseTimeToMinutes(b.manualConstraint!.forcedStartTime, params.startTime);
       return aTime - bTime;
     }
-
     return b.tempoTotalEst - a.tempoTotalEst;
   });
 
@@ -89,51 +126,41 @@ export const generateMockData = async (params: SimulationParams): Promise<Optimi
   const [sh, sm] = params.startTime.split(':').map(Number);
   const startDateTime = new Date(year, month - 1, day, sh, sm, 0, 0);
 
-  // 2. Distribuição da Frota
-  const totalTrucks = params.totalTrucks;
-  const numBombas = params.totalPumps;
-  
-  const bombas = Array.from({ length: numBombas }).map((_, i) => ({
-    id: i + 1,
-    availableMinutes: 0,
-    caminhoes: 0,
-    coords: branchCoords
-  }));
-
-  const lockedWorks = works.filter(o => o.manualConstraint?.locked);
-  const totalForcedTrucks = lockedWorks.reduce((acc, o) => acc + (o.manualConstraint?.forcedTrucks || 0), 0);
-  const availableFleetForVariable = Math.max(0, totalTrucks - totalForcedTrucks);
-
-  const variableWorks = works.filter(o => !o.manualConstraint?.locked).slice(0, Math.max(0, numBombas - lockedWorks.length));
+  // Distribuição de Frota
+  const totalTrucksAvailable = params.totalTrucks;
+  const forcedWorks = works.filter(o => o.manualConstraint?.locked);
+  const totalForcedTrucks = forcedWorks.reduce((acc, o) => acc + (o.manualConstraint?.forcedTrucks || 0), 0);
+  const remainingTrucks = Math.max(0, totalTrucksAvailable - totalForcedTrucks);
+  const variableWorks = works.filter(o => !o.manualConstraint?.locked).slice(0, Math.max(0, params.totalPumps - forcedWorks.length));
   const totalWeightVariable = variableWorks.reduce((acc, o) => acc + o.tempoTotalEst, 0);
 
-  let allocatedVariable = 0;
-  
+  let distributedVariable = 0;
   works.forEach(obra => {
       if (obra.manualConstraint?.locked) {
           obra.trucksAssigned = obra.manualConstraint.forcedTrucks;
+      } else if (variableWorks.some(vw => vw.id === obra.id) && totalWeightVariable > 0) {
+          const share = Math.floor(remainingTrucks * (obra.tempoTotalEst / totalWeightVariable));
+          obra.trucksAssigned = Math.max(1, share);
+          distributedVariable += obra.trucksAssigned;
       } else {
-          const isAmongInitial = variableWorks.some(vw => vw.id === obra.id);
-          if (isAmongInitial && totalWeightVariable > 0) {
-              const share = Math.floor(availableFleetForVariable * (obra.tempoTotalEst / totalWeightVariable));
-              obra.trucksAssigned = Math.max(1, share);
-              allocatedVariable += obra.trucksAssigned;
-          } else {
-              obra.trucksAssigned = 0; 
-          }
+          obra.trucksAssigned = 0;
       }
   });
 
-  if (allocatedVariable !== availableFleetForVariable && variableWorks.length > 0) {
-      const diff = availableFleetForVariable - allocatedVariable;
+  if (distributedVariable < remainingTrucks && variableWorks.length > 0) {
       const firstVar = works.find(o => o.id === variableWorks[0].id);
-      if (firstVar) firstVar.trucksAssigned = Math.max(1, (firstVar.trucksAssigned || 0) + diff);
+      if (firstVar) firstVar.trucksAssigned += (remainingTrucks - distributedVariable);
   }
 
-  // 3. Simulação
+  // Simulação
   const schedule: ScheduleItem[] = [];
-  const worksQueue = [...works];
+  const bombas = Array.from({ length: params.totalPumps }).map((_, i) => ({
+    id: i + 1,
+    availableMinutes: 0,
+    coords: branchCoords
+  }));
 
+  const worksQueue = [...works];
   while (worksQueue.some(o => !o.finished)) {
     bombas.sort((a, b) => a.availableMinutes - b.availableMinutes);
     const b = bombas[0];
@@ -156,29 +183,24 @@ export const generateMockData = async (params: SimulationParams): Promise<Optimi
     }
 
     const obra = worksQueue[workIdx];
-    
     if (!obra.trucksAssigned || obra.trucksAssigned === 0) {
-        obra.trucksAssigned = Math.max(1, Math.floor(totalTrucks / numBombas));
+        obra.trucksAssigned = Math.max(1, Math.floor(params.totalTrucks / params.totalPumps));
     }
 
-    const ida = getTravelTime(branchCoords, { lat: obra.lat, lng: obra.lng });
-    const cycleTime = obra.tempoUnitEst;
-    const interval = cycleTime / Math.max(1, obra.trucksAssigned);
+    const ida = (obra.tempoUnitEst - params.loadTime - params.unloadTime) / 2;
+    const interval = obra.tempoUnitEst / Math.max(1, obra.trucksAssigned);
     
-    // Respeito ao horário de início forçado se for a primeira carga na bomba para esta obra
-    let operationalStart = now;
+    let baseTime = now;
     if (obra.manualConstraint?.locked) {
         const forcedStartMin = parseTimeToMinutes(obra.manualConstraint.forcedStartTime, params.startTime);
-        operationalStart = Math.max(now, forcedStartMin);
+        baseTime = Math.max(now, forcedStartMin);
     }
 
-    let lastUnloadFinish = operationalStart + ida;
-
+    let lastEnd = baseTime + ida;
     for (let c = 0; c < obra.loads; c++) {
-      const arriveTime = operationalStart + ida + (c * interval);
-      const startUnload = Math.max(arriveTime, lastUnloadFinish);
+      const arriveTime = baseTime + ida + (c * interval);
+      const startUnload = Math.max(arriveTime, lastEnd);
       const endUnload = startUnload + params.unloadTime;
-
       schedule.push({
         id: `${obra.id}-L${c + 1}`,
         workId: obra.id,
@@ -189,14 +211,12 @@ export const generateMockData = async (params: SimulationParams): Promise<Optimi
         endTime: addMinutes(startDateTime, endUnload),
         status: 'unloading'
       });
-
-      lastUnloadFinish = endUnload;
+      lastEnd = endUnload;
     }
 
     obra.finished = true;
+    b.availableMinutes = lastEnd;
     obra.pumpId = `BOMBA-${b.id}`;
-    b.availableMinutes = lastUnloadFinish;
-    b.coords = { lat: obra.lat, lng: obra.lng };
   }
 
   const finalEnd = schedule.length > 0 ? Math.max(...schedule.map(s => s.endTime.getTime())) : startDateTime.getTime();
@@ -208,7 +228,7 @@ export const generateMockData = async (params: SimulationParams): Promise<Optimi
     summary: {
       totalTrips: schedule.length,
       completionTime: new Date(finalEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      efficiency: 0.92
+      efficiency: 0.94
     }
   };
 };
