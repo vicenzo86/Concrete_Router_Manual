@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import { OptimizationResult } from '../types';
 import L from 'leaflet';
-import { Map as MapIcon, Truck, Building2, MapPin } from 'lucide-react';
+import { Map as MapIcon, Layers, Building2, Truck, MapPin } from 'lucide-react';
 
 interface MapTabProps {
   data: OptimizationResult;
@@ -12,7 +12,6 @@ interface MapTabProps {
 
 const MARKER_COLORS = [ '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316' ];
 
-// Correção global de caminhos de assets do Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -24,48 +23,30 @@ const createCustomIcon = (label: string | number, color: string, isSquare = fals
   return L.divIcon({
     className: 'custom-marker-wrapper',
     html: `
-      <div class="${isSquare ? 'rounded-md' : 'rounded-full'} border-2 border-white text-white flex items-center justify-center font-black shadow-lg text-[11px]" 
-           style="background-color: ${color}; width: 26px; height: 26px; transform: translate(-13px, -13px);">
+      <div class="${isSquare ? 'rounded-md' : 'rounded-full'} border-2 border-white text-white flex items-center justify-center font-black shadow-xl text-[10px]" 
+           style="background-color: ${color}; width: 24px; height: 24px; transform: translate(-12px, -12px);">
         ${label}
       </div>
     `,
-    iconSize: [26, 26],
+    iconSize: [24, 24],
     iconAnchor: [0, 0]
   });
 };
 
-/**
- * Componente interno que controla o motor do mapa
- */
-const MapEffect: React.FC<{ works: any[]; branch: { lat: number, lng: number } }> = ({ works, branch }) => {
+const MapManager: React.FC<{ works: any[]; branch: { lat: number, lng: number } }> = ({ works, branch }) => {
   const map = useMap();
-  
   useEffect(() => {
-    // ESSENCIAL: InvalidateSize força o Leaflet a recalcular os tiles baseados no tamanho real do DOM
-    const refresh = () => {
+    const timer = setTimeout(() => {
       map.invalidateSize();
-    };
-
-    // Chamadas sucessivas para garantir o redimensionamento em abas dinâmicas
-    refresh();
-    const t1 = setTimeout(refresh, 100);
-    const t2 = setTimeout(refresh, 600);
-    const t3 = setTimeout(refresh, 1200);
-
-    if (works.length > 0) {
-      const points = works.map(w => [w.lat, w.lng] as [number, number]);
-      if (branch) points.push([branch.lat, branch.lng]);
-      const bounds = L.latLngBounds(points);
-      map.fitBounds(bounds, { padding: [60, 60], maxZoom: 15 });
-    }
-
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
+      if (works.length > 0) {
+        const points = works.map(w => [w.lat, w.lng] as [number, number]);
+        if (branch) points.push([branch.lat, branch.lng]);
+        const bounds = L.latLngBounds(points);
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+      }
+    }, 200);
+    return () => clearTimeout(timer);
   }, [map, works, branch]);
-  
   return null;
 };
 
@@ -74,104 +55,118 @@ export const MapTab: React.FC<MapTabProps> = ({ data, apiKey }) => {
 
   useEffect(() => {
     setMounted(true);
+    // Pequeno delay para garantir que o container do Leaflet tenha dimensões
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 300);
+    return () => clearTimeout(timer);
   }, []);
 
-  // Força o componente a remontar o Leaflet quando o ID do resultado muda
-  // Isso previne o estado "travado" do motor de renderização
-  const mapKey = useMemo(() => `map-instance-${data.works.length}-${apiKey ? 'auth' : 'osm'}`, [data.works.length, apiKey]);
+  // Chave do mapa baseada apenas nos dados para evitar re-renderizações desnecessárias
+  const mapKey = useMemo(() => `map-osm-${data.works.length}-${data.works.map(w => w.id).join('-')}`, [data.works]);
 
   if (data.works.length === 0) return (
-    <div className="h-full flex items-center justify-center bg-slate-50 text-slate-400 font-bold uppercase tracking-widest border-2 border-dashed border-slate-200 m-4 rounded-2xl">
-      Nenhum plano gerado ainda
+    <div className="h-full flex items-center justify-center bg-slate-50 text-slate-400 font-black uppercase tracking-widest border-2 border-dashed border-slate-200 m-8 rounded-3xl">
+      Inicie a simulação para visualizar o mapa...
     </div>
   );
 
-  const branchCoords: [number, number] = data.branchLocation 
-    ? [data.branchLocation.lat, data.branchLocation.lng] 
-    : [-26.8955, -48.6757];
-
-  // Configuração de Tiles ultra-resiliente
-  const isHereAvailable = apiKey && apiKey.length > 20;
-  const tileUrl = isHereAvailable
-    ? `https://{s}.base.maps.ls.hereapi.com/maptile/2.1/maptile/newest/normal.day/{z}/{x}/{y}/256/png8?apiKey=${apiKey}`
-    : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+  const branchCoords: [number, number] = data.branchLocation ? [data.branchLocation.lat, data.branchLocation.lng] : [-26.8955, -48.6757];
+  const osmUrl = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 
   return (
-    <div className="h-full w-full flex flex-col relative bg-slate-100 overflow-hidden">
+    <div className="h-full w-full flex flex-col relative bg-slate-100">
       <style>{`
-        /* CSS crítico para funcionamento do Leaflet v5 */
-        .leaflet-container { 
-          width: 100% !important; 
-          height: 100% !important; 
-          background: #e2e8f0 !important; 
-          outline: none;
-        }
+        .leaflet-container { width: 100% !important; height: 100% !important; background: #f8fafc; outline: none; }
         .custom-marker-wrapper { background: transparent !important; border: none !important; }
-        .map-root-container { flex: 1; position: relative; width: 100%; height: 100%; min-height: 0; }
-        .leaflet-tile-pane { opacity: 1 !important; }
+        .leaflet-popup-content-wrapper { border-radius: 1rem !important; padding: 0 !important; overflow: hidden; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1) !important; }
+        .leaflet-popup-content { margin: 0 !important; width: 220px !important; }
+        .leaflet-popup-tip-container { display: none !important; }
       `}</style>
       
-      <div className="p-4 bg-white border-b border-slate-200 flex justify-between items-center shadow-sm z-[1000]">
+      <div className="p-4 bg-white border-b border-slate-200 flex justify-between items-center shadow-sm z-[1001]">
         <div className="flex flex-col">
           <h2 className="text-lg font-black text-slate-800 flex items-center gap-2">
-            <MapIcon className="text-amber-500" size={20} /> Mapa de Rotas
+            <MapIcon className="text-indigo-500" size={20} /> Mapa Operacional
           </h2>
-          <span className="text-[10px] text-slate-400 font-bold uppercase ml-7">Visualização Operacional</span>
+          <div className="flex items-center gap-3 mt-0.5">
+            <span className="text-[10px] text-emerald-600 font-black uppercase flex items-center gap-1">
+               <Layers size={10}/> Provedor: OpenStreetMap
+            </span>
+            <span className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+               <Building2 size={10}/> HERE API: Roteamento Ativo
+            </span>
+          </div>
         </div>
-        <div className="text-[10px] font-black text-slate-400 uppercase bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
-          Provedor: {isHereAvailable ? 'HERE MAPS' : 'OPENSTREETMAP'}
-        </div>
+        {/* Botão removido para simplificar a UI conforme solicitado */}
       </div>
 
-      <div className="map-root-container">
+      <div className="flex-1 relative overflow-hidden">
         {mounted && (
           <MapContainer 
-            key={mapKey}
+            key={mapKey} 
             center={branchCoords} 
             zoom={13} 
-            scrollWheelZoom={true}
+            scrollWheelZoom={true} 
             style={{ height: '100%', width: '100%' }}
-            zoomControl={true}
           >
             <TileLayer 
-              attribution='&copy; OpenStreetMap contributors' 
-              url={tileUrl}
-              subdomains={isHereAvailable ? "1234" : "abc"}
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' 
+              url={osmUrl} 
             />
+            <MapManager works={data.works} branch={data.branchLocation || {lat: branchCoords[0], lng: branchCoords[1]}} />
             
-            <MapEffect 
-              works={data.works} 
-              branch={data.branchLocation || {lat: branchCoords[0], lng: branchCoords[1]}} 
-            />
-            
-            {/* Usina (DP) */}
-            <Marker position={branchCoords} icon={createCustomIcon('DP', '#1e293b', true)}>
-              <Popup><strong>Usina de Concreto</strong><br/>Ponto de Saída</Popup>
+            <Marker position={branchCoords} icon={createCustomIcon('DP', '#0f172a', true)}>
+              <Popup>
+                <div className="p-2 font-bold text-slate-800">
+                  Usina Principal (DP)
+                </div>
+              </Popup>
             </Marker>
 
-            {/* Obras */}
             {data.works.map((work, idx) => {
               const markerColor = MARKER_COLORS[idx % MARKER_COLORS.length];
               return (
                 <React.Fragment key={work.id}>
                   <Polyline 
                     positions={[branchCoords, [work.lat, work.lng]]} 
-                    pathOptions={{ color: markerColor, weight: 3, opacity: 0.6, dashArray: '8, 12' }} 
+                    pathOptions={{ color: markerColor, weight: 2, opacity: 0.3, dashArray: '5, 10' }} 
                   />
                   <Marker position={[work.lat, work.lng]} icon={createCustomIcon(idx + 1, markerColor)}>
-                    <Popup className="custom-popup">
-                      <div className="p-1 min-w-[180px]">
-                        <div className="font-black text-slate-900 text-sm mb-2 border-b border-slate-100 pb-1">
-                          {idx + 1}. {work.name}
+                    <Popup>
+                      <div className="p-4 font-sans bg-white">
+                        <div className="flex items-start gap-2 mb-3">
+                          <div className="bg-slate-100 p-1.5 rounded-lg text-slate-500 shrink-0"><Building2 size={16} /></div>
+                          <div className="font-bold text-[12px] leading-tight text-slate-800 pr-3">{work.name}</div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-[10px] font-bold uppercase">
-                          <div className="text-slate-400">Cargas: <span className="text-blue-600">{work.loads}</span></div>
-                          <div className="text-slate-400">Volume: <span className="text-emerald-600">{work.volume} m³</span></div>
-                          <div className="text-slate-400">Frota: <span className="text-amber-600">{work.trucksAssigned}</span></div>
-                          <div className="text-slate-400">Bomba: <span className="text-purple-600">{work.pumpId?.replace('BOMBA-', '') || 'N/A'}</span></div>
+
+                        <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 mb-3 space-y-2">
+                          <div className="flex justify-between items-center text-[9px] font-bold">
+                            <span className="text-slate-400 uppercase tracking-tight">BOMBA DESIGNADA</span>
+                            <span className="text-blue-600 font-black uppercase">{work.pumpId?.replace('-', ' ') || 'AGUARDANDO'}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-[9px] font-bold">
+                            <span className="text-slate-400 uppercase tracking-tight">FROTA ALOCADA</span>
+                            <span className="text-amber-600 flex items-center gap-1 font-black uppercase">
+                              <Truck size={11} /> {work.trucksAssigned || 0} UNIDADES
+                            </span>
+                          </div>
                         </div>
-                        <div className="mt-2 text-[9px] text-slate-400 italic leading-tight">
-                          {work.address}
+
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                          <div className="bg-blue-50/50 border border-blue-100 rounded-xl py-3 text-center">
+                            <div className="text-[9px] text-blue-400 font-bold uppercase mb-1 tracking-tight">Cargas</div>
+                            <div className="text-xl font-black text-blue-700 leading-none">{work.loads}</div>
+                          </div>
+                          <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl py-3 text-center">
+                            <div className="text-[9px] text-emerald-400 font-bold uppercase mb-1 tracking-tight">Volume</div>
+                            <div className="text-xl font-black text-emerald-700 leading-none">{work.volume} m³</div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-[9px] text-slate-400 border-t border-slate-100 pt-3">
+                          <MapPin size={10} className="shrink-0" />
+                          <span className="truncate italic">{work.address}</span>
                         </div>
                       </div>
                     </Popup>

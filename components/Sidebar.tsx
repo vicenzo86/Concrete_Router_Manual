@@ -1,7 +1,7 @@
 
 import React, { useRef, useEffect, useMemo } from 'react';
 import { SimulationParams, UploadedWork, WorkConstraint } from '../types';
-import { Settings, Play, Truck, FileSpreadsheet, Sliders, Calculator, Zap, Trash2, Lock, Unlock, AlertTriangle, LogOut, Calendar, Clock, Weight, Timer } from 'lucide-react';
+import { Settings, Play, Truck, FileSpreadsheet, Sliders, Calculator, Zap, Trash2, Lock, Unlock, AlertTriangle, LogOut, MapPin, Building2, Key } from 'lucide-react';
 
 // Declare global variable loaded via script tag in index.html
 declare const readXlsxFile: any;
@@ -147,10 +147,44 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onRun, isRu
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar">
-        {/* PARÂMETROS GLOBAIS */}
+        
+        {/* NOVA SEÇÃO: CONFIGURAÇÃO DA USINA */}
         <div className="space-y-4">
           <h2 className="text-xs font-semibold uppercase text-slate-500 tracking-wider flex items-center gap-2">
-             <Settings size={12} /> Parâmetros Globais
+             <MapPin size={12} className="text-indigo-400" /> Configuração da Usina
+          </h2>
+          <div className="space-y-3 bg-slate-800/40 p-3 rounded-lg border border-slate-800">
+            <div className="space-y-1">
+              <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                <Key size={10} /> HERE API Key
+              </label>
+              <input 
+                type="password" 
+                value={params.apiKey} 
+                onChange={(e) => handleChange('apiKey', e.target.value)} 
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-amber-200"
+                placeholder="Sua Chave API"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                <Building2 size={10} /> Endereço da Usina
+              </label>
+              <textarea 
+                rows={2}
+                value={params.branchAddress} 
+                onChange={(e) => handleChange('branchAddress', e.target.value)} 
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs resize-none"
+                placeholder="Digite o endereço de saída..."
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* PARÂMETROS OPERACIONAIS */}
+        <div className="space-y-4">
+          <h2 className="text-xs font-semibold uppercase text-slate-500 tracking-wider flex items-center gap-2">
+             <Settings size={12} /> Parâmetros de Operação
           </h2>
           <div className="grid grid-cols-2 gap-3">
              <div className="space-y-1">

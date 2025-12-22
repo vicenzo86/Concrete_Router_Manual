@@ -8,6 +8,7 @@ export interface WorkSite {
   lat: number;
   lng: number;
   trucksAssigned?: number; 
+  pumpId?: string;
 }
 
 export interface UploadedWork {
