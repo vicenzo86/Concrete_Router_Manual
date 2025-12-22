@@ -98,7 +98,6 @@ export const MapTab: React.FC<MapTabProps> = ({ data, apiKey }) => {
             </span>
           </div>
         </div>
-        {/* Botão removido para simplificar a UI conforme solicitado */}
       </div>
 
       <div className="flex-1 relative overflow-hidden">
@@ -130,7 +129,7 @@ export const MapTab: React.FC<MapTabProps> = ({ data, apiKey }) => {
                 <React.Fragment key={work.id}>
                   <Polyline 
                     positions={[branchCoords, [work.lat, work.lng]]} 
-                    pathOptions={{ color: markerColor, weight: 2, opacity: 0.3, dashArray: '5, 10' }} 
+                    pathOptions={{ color: markerColor, weight: 3, opacity: 0.8, dashArray: '10, 10' }} 
                   />
                   <Marker position={[work.lat, work.lng]} icon={createCustomIcon(idx + 1, markerColor)}>
                     <Popup>
