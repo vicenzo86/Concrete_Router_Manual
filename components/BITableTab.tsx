@@ -22,7 +22,7 @@ export const BITableTab: React.FC<BITableTabProps> = ({ data }) => {
   if (data.works.length === 0) return <div className="p-10 text-center text-slate-500">Sem dados. Execute a simulação para visualizar o dashboard.</div>;
 
   const rows = data.works.map(work => {
-    const workItems = data.schedule.filter(s => s.workId === work.id);
+    const workItems = data.schedule.filter(s => s.workId === work.id && s.status === 'unloading');
     if (workItems.length === 0) return null;
 
     const sortedItems = [...workItems].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
@@ -56,6 +56,8 @@ export const BITableTab: React.FC<BITableTabProps> = ({ data }) => {
     const wb = XLSX.utils.book_new();
     const exportData = rows.map(r => ({
         "OBRA": r?.name,
+        "VALIDAÇÃO": data.conflicts?.length ? "COM CONFLITOS" : "Sem conflitos detectados no modelo",
+        "CONFLITOS": (data.conflicts || []).join(" | "),
         "BOMBA": r?.pumpId,
         "INICIO": formatDateTime(r!.startTime),
         "TERMINO": formatDateTime(r!.endTime),

@@ -29,7 +29,7 @@ export const GanttTab: React.FC<GanttTabProps> = ({ data }) => {
   const getLeft = (date: Date) => `${((date.getTime() - startTime.getTime()) / totalDuration) * 100}%`;
   const getWidth = (start: Date, end: Date) => `${((end.getTime() - start.getTime()) / totalDuration) * 100}%`;
 
-  const hours = [];
+  const hours: Date[] = [];
   for (let t = new Date(startTime).setMinutes(0,0,0); t <= endTime.getTime(); t += 3600000) {
     hours.push(new Date(t));
   }
@@ -69,7 +69,7 @@ export const GanttTab: React.FC<GanttTabProps> = ({ data }) => {
           {/* Linhas das Obras */}
           <div className="space-y-6">
             {data.works.map((work) => {
-              const loads = data.schedule.filter(s => s.workId === work.id);
+              const loads = data.schedule.filter(s => s.workId === work.id && s.status === 'unloading');
               if (loads.length === 0) return null;
               
               const pumpId = loads[0].pumpId;

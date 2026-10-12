@@ -60,6 +60,8 @@ export interface OptimizationResult {
   schedule: ScheduleItem[];
   works: WorkSite[];
   branchLocation?: { lat: number; lng: number };
+  diagnostics?: string[];
+  conflicts?: string[];
   summary: {
     totalTrips: number;
     completionTime: string;

@@ -23,8 +23,8 @@ const App: React.FC = () => {
   });
   
   const [params, setParams] = useState<SimulationParams>({
-    mode: 'optimizer',
-    apiKey: '9bzBwwsjHfKmfIrrYpvtir7DbEjTUOj2vFWrAC72c4A',
+    mode: 'simulator',
+    apiKey: import.meta.env.VITE_HERE_API_KEY || '',
     branchAddress: 'R. Geral Hugo de Almeida - Navegantes - SC',
     branchLat: '',
     branchLng: '',
@@ -70,7 +70,7 @@ const App: React.FC = () => {
       setActiveTab('gantt');
     } catch (error) {
       console.error("Simulation failed:", error);
-      alert("Ocorreu um erro durante a simulação.");
+      alert(error instanceof Error ? error.message : 'Ocorreu um erro durante a simulação.');
     } finally {
       setIsRunning(false);
     }
@@ -144,7 +144,7 @@ const App: React.FC = () => {
            {results.summary.totalTrips > 0 && (
              <div className="flex gap-4 text-xs font-semibold bg-slate-50 px-3 py-1.5 rounded-full border border-slate-200 text-slate-600">
                <span className="text-slate-400 mr-2 uppercase tracking-wider text-[10px]">
-                 {params.mode === 'simulator' ? 'Simulação Manual' : 'Otimização Auto'}
+                 {params.mode === 'simulator' ? 'Simulação Manual' : 'Distribuição Auto'}
                </span>
                <span>Viagens: {results.summary.totalTrips}</span>
                <span className="w-px h-4 bg-slate-300"></span>
@@ -153,6 +153,16 @@ const App: React.FC = () => {
            )}
         </div>
 
+        {results.conflicts && results.conflicts.length > 0 && (
+          <div role="alert" className="bg-red-50 border-b border-red-200 text-red-800 px-6 py-3 max-h-40 overflow-auto text-sm">
+            <strong>Plano com conflitos — revise antes de usar na operação.</strong>
+            <ul className="list-disc pl-5">{results.conflicts.map((message, i) => <li key={i}>{message}</li>)}</ul>
+          </div>
+        )}
+        {results.diagnostics && <details className="bg-amber-50 text-amber-900 px-6 py-2 text-xs border-b border-amber-200">
+          <summary className="cursor-pointer font-bold">Premissas do planejamento — confira antes de executar</summary>
+          <ul className="list-disc pl-5 mt-2">{results.diagnostics.map((message, i) => <li key={i}>{message}</li>)}</ul>
+        </details>}
         <div className="flex-1 overflow-hidden relative bg-slate-50">
           {activeTab === 'gantt' && <GanttTab data={results} />}
           {activeTab === 'bi' && <BITableTab data={results} />}

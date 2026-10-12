@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import { planSchedule } from '../utils/planner';
+import { SimulationParams } from '../types';
+const params: SimulationParams = {mode:'simulator',apiKey:'',branchAddress:'',branchLat:'',branchLng:'',loadTime:20,unloadTime:10,totalTrucks:2,truckCapacity:8,totalPumps:2,startDate:'2026-10-12',startTime:'05:00',generations:0,popSize:0,uploadedData:[{loads:4,address:'A'}],manualConstraints:[{workIndex:0,forcedTrucks:2,forcedPumpId:2,forcedStartTime:'06:00',locked:true}]};
+const work = {id:'W-1',name:'A',address:'A',loads:4,volume:32,lat:-26,lng:-48,outward:15,inward:20};
+const branch = {lat:-26,lng:-48};
+const result = planSchedule(params,[work],branch);
+const deliveries = result.schedule.filter(s => s.status === 'unloading');
+assert.equal(deliveries.length,4);
+assert.equal(result.summary.totalTrips,4);
+assert.equal(deliveries[0].startTime.getHours(),6);
+assert.ok(deliveries.every(s=>s.pumpId === 'BOMBA-2'));
+assert.equal(result.works[0].trucksAssigned,2);
+assert.deepEqual(result.conflicts,[]);
+for (let i=1;i<deliveries.length;i++) assert.ok(deliveries[i].startTime >= deliveries[i-1].endTime);
+for (const truck of ['C-1','C-2']) {
+  const phases = result.schedule.filter(s=>s.truckId===truck).sort((a,b)=>a.startTime.getTime()-b.startTime.getTime());
+  for(let i=1;i<phases.length;i++) assert.ok(phases[i].startTime >= phases[i-1].endTime);
+}
+assert.equal(result.schedule.length,16);
+assert.equal(result.schedule.find(s=>s.status==='loading')!.startTime.getMinutes(),25);
+const two = {...params, uploadedData:[{loads:4,address:'A'},{loads:4,address:'B'}], manualConstraints:[...params.manualConstraints,{workIndex:1,forcedTrucks:2,forcedPumpId:1,forcedStartTime:'06:00',locked:true}]};
+const conflicting=planSchedule(two,[work,{...work,id:'W-2',name:'B'}],branch);
+assert.ok(conflicting.conflicts!.some(s=>s.includes('indisponível')));
+assert.equal(conflicting.schedule.filter(s=>s.workId==='W-2' && s.status==='unloading')[0].startTime.getHours(),6);
+const pumpClash=planSchedule({...two,manualConstraints:two.manualConstraints.map(c=>({...c,forcedPumpId:2}))},[work,{...work,id:'W-2',name:'B'}],branch);
+assert.ok(pumpClash.conflicts!.some(s=>s.includes('ocupada')));
+assert.throws(()=>planSchedule({...params,totalTrucks:0},[work],branch));
+assert.throws(()=>planSchedule({...params,manualConstraints:[{...params.manualConstraints[0],forcedTrucks:3}]},[work],branch));
+const early=planSchedule({...params,manualConstraints:[{...params.manualConstraints[0],forcedStartTime:'05:00'}]},[work],branch);
+assert.ok(early.conflicts!.some(s=>s.includes('anterior')));
+const automatic=planSchedule({...two,mode:'optimizer',manualConstraints:[]},[work,{...work,id:'W-2',name:'B'}],branch);
+assert.deepEqual(automatic.conflicts,[]);
+console.log('OK: horário e bomba fixados, frota preservada, fases do ciclo, ausência de sobreposição interna, conflitos de frota e bomba, entrada inválida, início antecipado e distribuição automática.');

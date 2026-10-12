@@ -94,7 +94,7 @@ export const MapTab: React.FC<MapTabProps> = ({ data, apiKey }) => {
                <Layers size={10}/> Provedor: OpenStreetMap
             </span>
             <span className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1">
-               <Building2 size={10}/> HERE API: Roteamento Ativo
+               <Building2 size={10}/> Tempos: HERE • linhas: ligação direta
             </span>
           </div>
         </div>

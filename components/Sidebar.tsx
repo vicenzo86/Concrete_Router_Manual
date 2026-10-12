@@ -28,7 +28,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onRun, isRu
                     forcedTrucks: 4, 
                     forcedPumpId: (idx % prev.totalPumps) + 1,
                     forcedStartTime: prev.startTime,
-                    locked: false
+                    locked: prev.mode === 'simulator'
                 }));
                 return { ...prev, manualConstraints: newConstraints };
             }
@@ -68,19 +68,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onRun, isRu
     if (!file) return;
     try {
         const rows = await readXlsxFile(file);
-        if (rows.length < 2) return;
+        if (rows.length < 2) throw new Error('A planilha deve conter cabeçalho e pelo menos uma obra.');
         
         const headers = rows[0].map((h: any) => h?.toString().toLowerCase() || '');
         const coordIdx = headers.findIndex((h: string) => h.includes('coord'));
         const loadsIdx = headers.findIndex((h: string) => h.includes('carga') && h.includes('inic'));
-        const addrIdx = headers.findIndex((h: string) => h.includes('endereco') || h.includes('obra'));
+        const addrIdx = headers.findIndex((h: string) => h.normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('endereco') || h.includes('obra'));
 
         const parsedData: UploadedWork[] = [];
         for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
             if (!row || row.length < 1) continue;
             
-            let loads = Number(row[loadsIdx !== -1 ? loadsIdx : 0]) || 0;
+            if (row.every((cell: any) => cell === null || cell === '')) continue;
+            let loads = Number(row[loadsIdx !== -1 ? loadsIdx : 0]);
+            if (!Number.isInteger(loads) || loads <= 0) throw new Error(`Linha ${i + 1}: quantidade de cargas inválida.`);
             let address = row[addrIdx !== -1 ? addrIdx : (loadsIdx === 0 ? 1 : 0)]?.toString() || '';
             let lat: number | undefined;
             let lng: number | undefined;
@@ -107,13 +109,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onRun, isRu
                     forcedTrucks: 4,
                     forcedPumpId: (idx % prev.totalPumps) + 1,
                     forcedStartTime: prev.startTime,
-                    locked: false
+                    locked: prev.mode === 'simulator'
                 }))
             }));
         }
     } catch (error) {
         console.error(error);
-        alert('Erro ao ler Excel. Verifique o formato.');
+        alert(error instanceof Error ? error.message : 'Erro ao ler Excel.');
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -137,10 +139,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onRun, isRu
         
         <div className="bg-slate-800 p-1 rounded-lg flex relative">
             <button onClick={() => handleChange('mode', 'optimizer')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded transition-all z-10 ${params.mode === 'optimizer' ? 'text-slate-900' : 'text-slate-400 hover:text-white'}`}>
-                <Zap size={14} /> Auto
+                <Zap size={14} /> Distribuir
             </button>
-            <button onClick={() => handleChange('mode', 'simulator')} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded transition-all z-10 ${params.mode === 'simulator' ? 'text-slate-900' : 'text-slate-400 hover:text-white'}`}>
-                <Sliders size={14} /> Sim
+            <button onClick={() => setParams(prev => ({...prev, mode: 'simulator', manualConstraints: prev.manualConstraints.map(c => ({...c, locked:true}))}))} className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded transition-all z-10 ${params.mode === 'simulator' ? 'text-slate-900' : 'text-slate-400 hover:text-white'}`}>
+                <Sliders size={14} /> Manual
             </button>
             <div className={`absolute top-1 bottom-1 w-1/2 bg-amber-500 rounded shadow transition-all duration-300 ${params.mode === 'simulator' ? 'translate-x-full' : 'translate-x-0'}`}></div>
         </div>
@@ -181,6 +183,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onRun, isRu
           </div>
         </div>
 
+        <p className="text-[11px] text-slate-400">No modo manual, trave cada obra e informe bomba, frota e horário da primeira descarga. Os conflitos serão sinalizados sem alterar suas escolhas.</p>
         {/* PARÂMETROS OPERACIONAIS */}
         <div className="space-y-4">
           <h2 className="text-xs font-semibold uppercase text-slate-500 tracking-wider flex items-center gap-2">
@@ -234,7 +237,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onRun, isRu
             </button>
 
             <div className="bg-slate-800 rounded border border-slate-700 p-1 space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar">
-                {(isUsingUploadedData ? params.uploadedData : []).map((item: any, idx) => {
+                {(params.uploadedData || []).map((item: any, idx) => {
                     const constraint = params.manualConstraints[idx];
                     if (!constraint) return null;
                     return (
@@ -256,7 +259,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onRun, isRu
                                         <input type="number" min="1" max={params.totalPumps} value={constraint.forcedPumpId} onChange={(e) => handleConstraintChange(idx, 'forcedPumpId', Number(e.target.value))} className="w-full bg-slate-800 border border-slate-600 rounded px-1 py-1 text-center text-white text-[11px]" />
                                     </div>
                                     <div>
-                                        <label className="text-[9px] text-slate-500 block mb-0.5 uppercase font-bold">Início</label>
+                                        <label className="text-[9px] text-slate-500 block mb-0.5 uppercase font-bold">1ª descarga</label>
                                         <input type="time" value={constraint.forcedStartTime} onChange={(e) => handleConstraintChange(idx, 'forcedStartTime', e.target.value)} className="w-full bg-slate-800 border border-slate-600 rounded px-1 py-1 text-center text-white text-[11px]" />
                                     </div>
                                 </div>
@@ -268,13 +271,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ params, setParams, onRun, isRu
             {isOverCapacity && (
                 <div className="bg-red-900/40 border border-red-500/50 p-2 rounded flex items-start gap-2 text-[10px] text-red-200">
                     <AlertTriangle size={14} className="flex-shrink-0" />
-                    <div><strong>Erro:</strong> Frotas travadas ({totalManualTrucks}) excedem o total ({params.totalTrucks}).</div>
+                    <div><strong>Atenção:</strong> A soma das frotas ({totalManualTrucks}) supera o total ({params.totalTrucks}). Isso pode ser válido em horários diferentes; confira os conflitos do plano.</div>
                 </div>
             )}
         </div>
 
-        <button onClick={onRun} disabled={isRunning || isOverCapacity} className={`w-full py-4 px-4 rounded-xl font-black shadow-lg flex items-center justify-center gap-2 transition-all transform active:scale-95 mt-auto uppercase tracking-widest ${ isRunning ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-900 shadow-amber-500/20' }`}>
-          {isRunning ? ( <><Settings className="animate-spin" size={18} /> Calculando... </> ) : ( <><Play size={18} /> Otimizar Rotas </> )}
+        <button onClick={onRun} disabled={isRunning || !isUsingUploadedData} className={`w-full py-4 px-4 rounded-xl font-black shadow-lg flex items-center justify-center gap-2 transition-all transform active:scale-95 mt-auto uppercase tracking-widest ${ isRunning ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-900 shadow-amber-500/20' }`}>
+          {isRunning ? ( <><Settings className="animate-spin" size={18} /> Calculando... </> ) : ( <><Play size={18} /> Gerar Programação </> )}
         </button>
       </div>
     </div>
